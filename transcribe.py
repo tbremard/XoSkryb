@@ -1,35 +1,14 @@
-import subprocess
 import sys
 import os
+import torch
+import whisper
 
 
 def transcribe(audio_file: str = "test.mp3") -> str:
-    os.makedirs("Transcripts", exist_ok=True)
-
-    result = subprocess.run(
-        [
-            "whisper", audio_file,
-            "--device", "cuda",
-            "--language", "English",
-            "--model", "small",
-            "--output_format", "txt",
-            "--output_dir", "Transcripts",
-        ],
-        capture_output=True,
-        text=True,
-    )
-
-    if result.returncode != 0:
-        print("Whisper error:", result.stderr)
-        sys.exit(1)
-
-    base = os.path.splitext(os.path.basename(audio_file))[0]
-    txt_path = os.path.join("Transcripts", base + ".txt")
-
-    with open(txt_path, "r", encoding="utf-8") as f:
-        transcript = f.read().strip()
-
-    return transcript
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = whisper.load_model("small", device=device)
+    result = model.transcribe(audio_file, language="english")
+    return result["text"].strip()
 
 
 if __name__ == "__main__":
