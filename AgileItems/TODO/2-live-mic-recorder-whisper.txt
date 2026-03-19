@@ -1,0 +1,23 @@
+TaskName   : Live mic recorder with silence detection and Whisper
+-------------------------------------------------------------------------
+Last Update: 2026-03-19 00:00:00
+-------------------------------------------------------------------------
+Description: Create a Python module that records live microphone audio using sounddevice or pyaudio, detects
+  silence to automatically stop the recording, saves the audio as a WAV file, then passes it to Whisper CLI
+  for transcription. Must include an interactive setup step to let the user select the audio input device.
+-------------------------------------------------------------------------
+Plan:
+  [] Create recorder.py in D:\Prog\XoScriber\ with device listing: use sounddevice.query_devices() to print
+       all input devices with index and name, then prompt user to select one
+  [] Implement record_audio(device_index, samplerate=16000) using sounddevice.InputStream that appends chunks
+       to a buffer and monitors RMS amplitude to detect silence
+  [] Define SILENCE_THRESHOLD (e.g. 0.01 RMS) and SILENCE_DURATION (e.g. 2.0 seconds): stop recording when
+       RMS stays below threshold for that duration
+  [] Save recorded audio buffer as recordings/output.wav using scipy.io.wavfile.write or soundfile.write,
+       creating recordings/ directory if it does not exist
+  [] After saving, call Whisper CLI via subprocess: whisper "recordings/output.wav" --device cuda
+       --language English --model small --output_format txt --output_dir Transcripts
+  [] Read and print the resulting transcript from Transcripts/output.txt
+  [] Add a main loop so the module continuously records -> transcribes -> prints until user presses Ctrl+C
+  [] Test: run python recorder.py, select mic device, speak "hello this is a test", verify silence stops
+       recording and Transcripts/output.txt contains the spoken text

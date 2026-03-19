@@ -1,0 +1,15 @@
+TaskName   : Whisper CLI transcribe audio file
+-------------------------------------------------------------------------
+Last Update: 2026-03-19 00:00:00
+-------------------------------------------------------------------------
+Description: Create a Python script that calls the Whisper CLI to transcribe an audio file (test.mp3) and saves
+  the output as a .txt file in the Transcripts/ folder. Command used: whisper "test.mp3" --device cuda
+  --language English --model small --output_format txt --output_dir Transcripts
+-------------------------------------------------------------------------
+Plan:
+  [X] Create transcribe.py in D:\Prog\XoScriber\ that runs Whisper CLI via subprocess with args:
+       --device cuda --language English --model small --output_format txt --output_dir Transcripts
+  [X] Accept an audio file path as a command-line argument (default: test.mp3)
+  [X] Ensure Transcripts/ directory is created if it does not exist before running Whisper
+  [X] Print the transcription result by reading and displaying the generated .txt file from Transcripts/
+  [X] Test by running: python transcribe.py test.mp3 and verifying Transcripts/test.txt contains correct text
