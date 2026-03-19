@@ -210,6 +210,10 @@ True    NVIDIA GeForce GTX 1660
 
 If this prints `False`, PyTorch cannot see your GPU. Do not proceed until this is resolved.
 
+The screenshot below confirms that XoSkryb is actively using the CUDA GPU during transcription — this is why installing the CUDA-enabled build of PyTorch **before** Whisper is critical:
+
+![CUDA GPU in use during transcription](cuda-used.jpg)
+
 #### Step 4 — Install Whisper
 
 ```
@@ -274,6 +278,8 @@ Selections are saved to `XoSkryb.config` and reused on every subsequent run.
 | New speech during transcription | Captured normally — nothing is missed |
 | Press **X** | Graceful shutdown — finishes all pending transcriptions before exiting |
 | Press **Ctrl+C** | Immediate shutdown signal — pending transcriptions are still flushed |
+
+![XoSkryb typing inside Claude Code](demo.jpg)
 
 ### One-Shot File Transcription
 
