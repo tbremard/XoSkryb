@@ -1,0 +1,20 @@
+TaskName   : KeyboardController refactor
+-------------------------------------------------------------------------
+Last Update: 2026-03-20 00:00:00
+-------------------------------------------------------------------------
+Description: Extract all platform-specific keyboard injection and quit-key detection code from
+  module-level functions and if/elif/else blocks into a single KeyboardController class.
+  Windows implementation is complete. macOS and Linux are stubbed as TO BE DONE.
+-------------------------------------------------------------------------
+Plan:
+  [X] Define KeyboardController class with quit_key_pressed() and type_text() public interface
+  [X] Move Windows ctypes struct definitions (_MOUSEINPUT, _KEYBDINPUT, _HARDWAREINPUT,
+      _INPUT_UNION, _INPUT) into _init_windows() method, stored on self
+  [X] Implement _type_windows() using self-stored ctypes types and SendInput reference
+  [X] Implement quit_key_pressed() with Windows msvcrt branch and TO BE DONE stubs for macOS/Linux
+  [X] Implement type_text() dispatcher with Windows branch and TO BE DONE stubs with guidance
+      comments for macOS (pyobjc-framework-Quartz) and Linux (python-xlib / evdev)
+  [X] Instantiate keyboard = KeyboardController() at module level after class definition
+  [X] Replace _quit_key_pressed() call site with keyboard.quit_key_pressed()
+  [X] Replace type_into_active_window() call site with keyboard.type_text()
+  [X] Remove all module-level platform if/elif/else blocks and free functions

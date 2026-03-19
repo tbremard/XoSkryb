@@ -23,171 +23,163 @@ import torch
 import whisper
 
 # ---------------------------------------------------------------------------
-# Platform detection
+# KeyboardController — platform-specific keyboard injection and quit detection
 # ---------------------------------------------------------------------------
 
-_PLATFORM = sys.platform   # "win32" | "darwin" | "linux"
+class KeyboardController:
+    """
+    Abstracts keyboard injection and quit-key detection across platforms.
 
-# ---------------------------------------------------------------------------
-# Keyboard injection — platform-specific implementations
-# ---------------------------------------------------------------------------
+    Public interface:
+        quit_key_pressed() -> bool
+        type_text(text: str)
 
-if _PLATFORM == "win32":
-
-    import ctypes
-    import ctypes.wintypes as wintypes
-    import msvcrt
-
-    def _quit_key_pressed() -> bool:
-        """Return True if the user pressed X/x in the console (Windows)."""
-        if msvcrt.kbhit():
-            return msvcrt.getwch().lower() == "x"
-        return False
+    Windows is fully implemented. macOS and Linux are TO BE DONE.
+    """
 
     _INPUT_KEYBOARD    = 1
     _KEYEVENTF_UNICODE = 0x0004
     _KEYEVENTF_KEYUP   = 0x0002
 
-    # All three union members must be present so ctypes computes the correct
-    # struct size (MOUSEINPUT is the largest member at 32 bytes on 64-bit).
-    # Without them the union is undersized and SendInput reads the event array
-    # at wrong offsets, silently dropping all keystrokes.
+    def __init__(self):
+        self._platform = sys.platform
+        if self._platform == "win32":
+            self._init_windows()
 
-    class _MOUSEINPUT(ctypes.Structure):
-        _fields_ = [
-            ("dx",          wintypes.LONG),
-            ("dy",          wintypes.LONG),
-            ("mouseData",   wintypes.DWORD),
-            ("dwFlags",     wintypes.DWORD),
-            ("time",        wintypes.DWORD),
-            ("dwExtraInfo", ctypes.c_size_t),
-        ]
+    # ------------------------------------------------------------------
+    # Windows — initialisation
+    # ------------------------------------------------------------------
 
-    class _KEYBDINPUT(ctypes.Structure):
-        _fields_ = [
-            ("wVk",         wintypes.WORD),
-            ("wScan",       wintypes.WORD),
-            ("dwFlags",     wintypes.DWORD),
-            ("time",        wintypes.DWORD),
-            ("dwExtraInfo", ctypes.c_size_t),
-        ]
+    def _init_windows(self):
+        import ctypes
+        import ctypes.wintypes as wintypes
 
-    class _HARDWAREINPUT(ctypes.Structure):
-        _fields_ = [
-            ("uMsg",    wintypes.DWORD),
-            ("wParamL", wintypes.WORD),
-            ("wParamH", wintypes.WORD),
-        ]
+        # All three union members must be present so ctypes computes the
+        # correct struct size (MOUSEINPUT is the largest at 32 bytes on
+        # 64-bit). Without them the union is undersized and SendInput reads
+        # the event array at wrong offsets, silently dropping keystrokes.
 
-    class _INPUT_UNION(ctypes.Union):
-        _fields_ = [
-            ("mi", _MOUSEINPUT),
-            ("ki", _KEYBDINPUT),
-            ("hi", _HARDWAREINPUT),
-        ]
+        class _MOUSEINPUT(ctypes.Structure):
+            _fields_ = [
+                ("dx",          wintypes.LONG),
+                ("dy",          wintypes.LONG),
+                ("mouseData",   wintypes.DWORD),
+                ("dwFlags",     wintypes.DWORD),
+                ("time",        wintypes.DWORD),
+                ("dwExtraInfo", ctypes.c_size_t),
+            ]
 
-    class _INPUT(ctypes.Structure):
-        _anonymous_ = ("u",)
-        _fields_    = [
-            ("type", wintypes.DWORD),
-            ("u",    _INPUT_UNION),
-        ]
+        class _KEYBDINPUT(ctypes.Structure):
+            _fields_ = [
+                ("wVk",         wintypes.WORD),
+                ("wScan",       wintypes.WORD),
+                ("dwFlags",     wintypes.DWORD),
+                ("time",        wintypes.DWORD),
+                ("dwExtraInfo", ctypes.c_size_t),
+            ]
 
-    _send_input = ctypes.windll.user32.SendInput
-    _INPUT_SIZE = ctypes.sizeof(_INPUT)
+        class _HARDWAREINPUT(ctypes.Structure):
+            _fields_ = [
+                ("uMsg",    wintypes.DWORD),
+                ("wParamL", wintypes.WORD),
+                ("wParamH", wintypes.WORD),
+            ]
 
-    def type_into_active_window(text: str):
-        """Type text into whatever window currently has keyboard focus (Windows)."""
+        class _INPUT_UNION(ctypes.Union):
+            _fields_ = [
+                ("mi", _MOUSEINPUT),
+                ("ki", _KEYBDINPUT),
+                ("hi", _HARDWAREINPUT),
+            ]
+
+        class _INPUT(ctypes.Structure):
+            _anonymous_ = ("u",)
+            _fields_    = [
+                ("type", wintypes.DWORD),
+                ("u",    _INPUT_UNION),
+            ]
+
+        self._ctypes     = ctypes
+        self._KEYBDINPUT = _KEYBDINPUT
+        self._INPUT      = _INPUT
+        self._INPUT_SIZE = ctypes.sizeof(_INPUT)
+        self._send_input = ctypes.windll.user32.SendInput
+
+    # ------------------------------------------------------------------
+    # Public — quit-key detection
+    # ------------------------------------------------------------------
+
+    def quit_key_pressed(self) -> bool:
+        """Return True if the user pressed X/x to request a graceful shutdown."""
+        if self._platform == "win32":
+            import msvcrt
+            if msvcrt.kbhit():
+                return msvcrt.getwch().lower() == "x"
+            return False
+
+        # TO BE DONE — macOS
+        # Use select.select([sys.stdin], [], [], 0) combined with tty/termios
+        # to poll for a keypress without blocking, then check for 'x'.
+
+        # TO BE DONE — Linux
+        # Same approach: select + tty/termios raw mode.
+
+        return False
+
+    # ------------------------------------------------------------------
+    # Public — text injection
+    # ------------------------------------------------------------------
+
+    def type_text(self, text: str):
+        """Inject text as keystrokes into the currently focused window."""
+        if self._platform == "win32":
+            self._type_windows(text)
+        elif self._platform == "darwin":
+            # TO BE DONE — macOS
+            # Use pyobjc-framework-Quartz:
+            #   pip install pyobjc-framework-Quartz
+            #
+            #   import Quartz
+            #   event = Quartz.CGEventCreateKeyboardEvent(None, 0, True)
+            #   Quartz.CGEventKeyboardSetUnicodeString(event, len(ch), ch)
+            #   Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+            raise NotImplementedError("Keyboard injection not yet implemented for macOS.")
+        else:
+            # TO BE DONE — Linux (X11 or Wayland)
+            # X11:     pip install python-xlib
+            #          display.xtest_fake_input() with XStringToKeysym()
+            # Wayland: pip install evdev
+            #          UInput device, EV_KEY events
+            raise NotImplementedError(
+                f"Keyboard injection not yet implemented for {self._platform}."
+            )
+
+    # ------------------------------------------------------------------
+    # Windows — implementation
+    # ------------------------------------------------------------------
+
+    def _type_windows(self, text: str):
+        ctypes      = self._ctypes
+        _KEYBDINPUT = self._KEYBDINPUT
+        _INPUT      = self._INPUT
         chars = text + " "   # trailing space separates consecutive utterances
         for ch in chars:
             code   = ord(ch)
             events = []
-            for flags in (_KEYEVENTF_UNICODE, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP):
-                inp    = _INPUT(type=_INPUT_KEYBOARD)
+            for flags in (self._KEYEVENTF_UNICODE,
+                          self._KEYEVENTF_UNICODE | self._KEYEVENTF_KEYUP):
+                inp    = _INPUT(type=self._INPUT_KEYBOARD)
                 inp.ki = _KEYBDINPUT(wVk=0, wScan=code, dwFlags=flags,
                                      time=0, dwExtraInfo=0)
                 events.append(inp)
             arr  = (_INPUT * len(events))(*events)
-            sent = _send_input(len(events), arr, _INPUT_SIZE)
+            sent = self._send_input(len(events), arr, self._INPUT_SIZE)
             if sent != len(events):
                 print(f"[warn] SendInput: sent {sent}/{len(events)} events "
                       f"(WinError {ctypes.GetLastError()})")
             time.sleep(0.001)   # 1 ms between characters
 
-elif _PLATFORM == "darwin":
-
-    # -----------------------------------------------------------------------
-    # macOS — quit-key detection — NOT YET IMPLEMENTED
-    #
-    # On macOS there is no direct equivalent of msvcrt.kbhit().
-    # Options:
-    #   - Use select.select([sys.stdin], [], [], 0) to poll stdin in raw mode
-    #   - Use the 'tty' and 'termios' modules to switch the terminal to
-    #     non-blocking / raw mode before polling, then restore it after
-    # -----------------------------------------------------------------------
-
-    def _quit_key_pressed() -> bool:
-        return False   # TODO: implement for macOS
-
-    # -----------------------------------------------------------------------
-    # macOS — keyboard injection — NOT YET IMPLEMENTED
-    #
-    # To implement keyboard injection on macOS, use the Quartz / CoreGraphics
-    # framework via the pyobjc-framework-Quartz package:
-    #
-    #   pip install pyobjc-framework-Quartz
-    #
-    # Then use CGEventCreateKeyboardEvent() to post Unicode key events:
-    #
-    #   import Quartz
-    #   event = Quartz.CGEventCreateKeyboardEvent(None, 0, True)
-    #   Quartz.CGEventKeyboardSetUnicodeString(event, len(ch), ch)
-    #   Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
-    #
-    # Implement this logic inside type_into_active_window() below.
-    # -----------------------------------------------------------------------
-
-    def type_into_active_window(text: str):
-        raise NotImplementedError(
-            "Keyboard injection is not yet implemented for macOS.\n"
-            "See the comment block above this function in XoSkryb.py for guidance."
-        )
-
-else:
-
-    # -----------------------------------------------------------------------
-    # Linux / other — quit-key detection — NOT YET IMPLEMENTED
-    #
-    # Use select.select([sys.stdin], [], [], 0) combined with tty/termios
-    # to poll for a keypress without blocking, then check for 'x'.
-    # -----------------------------------------------------------------------
-
-    def _quit_key_pressed() -> bool:
-        return False   # TODO: implement for Linux
-
-    # -----------------------------------------------------------------------
-    # Linux / other — keyboard injection — NOT YET IMPLEMENTED
-    #
-    # To implement keyboard injection on Linux, use the python-xlib package
-    # (for X11) or the python-evdev package (for Wayland / direct input):
-    #
-    #   X11:    pip install python-xlib
-    #           Use display.xtest_fake_input() with Xlib.X.KeyPress events
-    #           and XStringToKeysym() to map Unicode characters to keysyms.
-    #
-    #   Wayland / evdev:  pip install evdev
-    #                     Create a UInput device and emit KEY_* events via
-    #                     ui.write(ecodes.EV_KEY, keycode, 1) / value=0.
-    #
-    # Implement this logic inside type_into_active_window() below.
-    # -----------------------------------------------------------------------
-
-    def type_into_active_window(text: str):
-        raise NotImplementedError(
-            "Keyboard injection is not yet implemented for this platform "
-            f"({_PLATFORM}).\n"
-            "See the comment block above this function in XoSkryb.py for guidance."
-        )
+keyboard = KeyboardController()
 
 SILENCE_THRESHOLD  = 0.02    # RMS below this = silence (raise if keyboard noise triggers recording)
 SILENCE_DURATION   = 2.0     # Seconds of continuous silence to stop recording
@@ -371,7 +363,7 @@ def wait_for_speech_then_record(device_index: int, stop_event: threading.Event) 
         callback  = callback,
     ):
         while state["phase"] != "done":
-            if state["phase"] == "waiting" and _quit_key_pressed():
+            if state["phase"] == "waiting" and keyboard.quit_key_pressed():
                 stop_event.set()
                 break
             if state["phase"] == "recording":
@@ -416,7 +408,7 @@ def _transcription_worker(seg_queue: queue.Queue, language: str, model):
             result     = model.transcribe(wav_path, language=language.lower())
             transcript = result["text"].strip()
             if transcript:
-                type_into_active_window(transcript)
+                keyboard.type_text(transcript)
 
         except Exception as e:
             print(f"\n[transcription error] {e}")
