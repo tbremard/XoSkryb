@@ -12,7 +12,6 @@
 import json
 import os
 import queue
-import subprocess
 import sys
 import tempfile
 import threading
@@ -20,6 +19,8 @@ import time
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
+import torch
+import whisper
 
 # ---------------------------------------------------------------------------
 # Platform detection
@@ -397,59 +398,31 @@ def save_wav(audio: np.ndarray, path: str):
 # Transcription worker  (background thread)
 # ---------------------------------------------------------------------------
 
-def _transcription_worker(seg_queue: queue.Queue, language: str):
+def _transcription_worker(seg_queue: queue.Queue, language: str, model):
     """
     Runs in a daemon thread.
-    Pulls WAV file paths from seg_queue, transcribes each with Whisper,
-    types the result into the currently focused window via clipboard paste,
-    then cleans up the temporary files.
+    Pulls WAV file paths from seg_queue, transcribes each with the
+    pre-loaded Whisper model (in-process, GPU-accelerated), types the
+    result into the currently focused window, then deletes the WAV.
 
     Receives None as sentinel to stop.
     """
-    os.makedirs(TRANSCRIPTS_DIR, exist_ok=True)
-
     while True:
         wav_path = seg_queue.get()
         try:
             if wav_path is None:      # sentinel — time to exit
                 break
 
-            result = subprocess.run(
-                [
-                    "whisper", wav_path,
-                    "--device", "cuda",
-                    "--language", language,
-                    "--model", "small",
-                    "--output_format", "txt",
-                    "--output_dir", TRANSCRIPTS_DIR,
-                ],
-                capture_output=True,
-                text=True,
-            )
-
-            stem     = os.path.splitext(os.path.basename(wav_path))[0]
-            txt_path = os.path.join(TRANSCRIPTS_DIR, stem + ".txt")
-
-            if result.returncode == 0 and os.path.exists(txt_path):
-                with open(txt_path, "r", encoding="utf-8") as f:
-                    transcript = f.read().strip()
-                if transcript:
-                    type_into_active_window(transcript)
-                # Remove the Whisper output txt — we typed it, we're done with it
-                try:
-                    os.remove(txt_path)
-                except OSError:
-                    pass
-            else:
-                if result.returncode != 0:
-                    print(f"\n[whisper error] {result.stderr[:200]}")
+            result     = model.transcribe(wav_path, language=language.lower())
+            transcript = result["text"].strip()
+            if transcript:
+                type_into_active_window(transcript)
 
         except Exception as e:
             print(f"\n[transcription error] {e}")
 
         finally:
-            # Always clean up the temporary WAV and mark item done —
-            # including when wav_path is None (the sentinel).
+            # Always clean up the temporary WAV and mark item done.
             if wav_path is not None:
                 try:
                     os.remove(wav_path)
@@ -492,11 +465,17 @@ def main():
 
     os.makedirs(RECORDINGS_DIR, exist_ok=True)
 
+    # Load Whisper model once — reused for every segment (no per-segment startup cost).
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"\nLoading Whisper model on {device.upper()}...", end=" ", flush=True)
+    model = whisper.load_model("small", device=device)
+    print("ready.")
+
     # Start the background transcription thread
     seg_queue = queue.Queue()
     worker    = threading.Thread(
         target=_transcription_worker,
-        args=(seg_queue, language),
+        args=(seg_queue, language, model),
         daemon=True,
         name="TranscriptionWorker",
     )

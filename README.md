@@ -84,13 +84,15 @@ the pipeline activates.
 
 A dedicated daemon thread runs permanently in the background, waiting on the transcription queue. Whenever a WAV file path appears in the queue, the worker:
 
-1. Invokes **OpenAI Whisper** as a subprocess via the system command line:
+1. Calls **OpenAI Whisper** directly via the Python API — no subprocess, no per-segment startup cost:
+   ```python
+   result = model.transcribe(segment_wav, language=language)
+   transcript = result["text"].strip()
    ```
-   whisper <segment.wav> --device cuda --language <lang> --model small --output_format txt --output_dir Transcripts
-   ```
-2. Whisper processes the audio segment using its neural network model (GPU-accelerated via CUDA when available) and writes a `.txt` file containing the transcript.
-3. The worker reads the `.txt` file, then injects each character into the active window using the Windows `SendInput` API — one Unicode key-down and key-up event per character, sent as a single batched `SendInput` call for efficiency.
-4. Both the temporary WAV file and the Whisper output `.txt` file are deleted after typing.
+   The Whisper model is loaded **once** at startup with `device="cuda"` (falls back to `"cpu"` automatically if no GPU is available), then reused for every segment.
+2. Whisper processes the audio segment using its neural network model (GPU-accelerated via CUDA when available) and returns the transcript directly in memory.
+3. The worker injects each character into the active window using the Windows `SendInput` API — one Unicode key-down and key-up event per character, sent as a single batched `SendInput` call for efficiency.
+4. The temporary WAV file is deleted after typing.
 5. The worker immediately waits for the next item in the queue.
 
 ### Transcription Queue
@@ -221,7 +223,7 @@ pip install openai-whisper
 ```
 
 Because PyTorch with CUDA is already installed, Whisper will use it automatically.
-The `--device cuda` flag in XoSkryb's Whisper call will be effective.
+XoSkryb loads the model with `device="cuda"` at startup — no flag needed, CUDA is detected automatically via `torch.cuda.is_available()`.
 
 Full Whisper installation guide: https://github.com/openai/whisper
 
