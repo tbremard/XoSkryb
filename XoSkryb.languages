@@ -1,0 +1,111 @@
+# whisper_languages.conf
+#
+# Uncomment (remove the leading #) the languages you want to appear in the
+# selection menu when recorder.py starts for the first time.
+# Lines beginning with # are ignored.  Blank lines are ignored.
+# The order here is the order shown on screen.
+#
+# After you choose a language, the choice is saved in recorder_config.json.
+# Delete recorder_config.json to be prompted again.
+#
+# ── Top languages (enabled by default) ──────────────────────────────────────
+English
+French
+German
+Spanish
+Portuguese
+# ── All other Whisper-supported languages (disabled by default) ─────────────
+# Afrikaans
+# Albanian
+# Amharic
+# Arabic
+# Armenian
+# Assamese
+# Azerbaijani
+# Bashkir
+# Basque
+# Belarusian
+# Bengali
+# Bosnian
+# Breton
+# Bulgarian
+# Burmese
+# Catalan
+# Chinese
+# Croatian
+# Czech
+# Danish
+# Dutch
+# Estonian
+# Faroese
+# Finnish
+# Galician
+# Georgian
+# Greek
+# Gujarati
+# Haitian Creole
+# Hausa
+# Hawaiian
+# Hebrew
+# Hindi
+# Hungarian
+# Icelandic
+# Indonesian
+# Italian
+# Japanese
+# Javanese
+# Kannada
+# Kazakh
+# Khmer
+# Korean
+# Lao
+# Latin
+# Latvian
+# Lingala
+# Lithuanian
+# Luxembourgish
+# Macedonian
+# Malagasy
+# Malay
+# Malayalam
+# Maltese
+# Maori
+# Marathi
+# Mongolian
+# Nepali
+# Norwegian
+# Nynorsk
+# Occitan
+# Pashto
+# Persian
+# Polish
+# Punjabi
+# Romanian
+# Russian
+# Sanskrit
+# Serbian
+# Shona
+# Sindhi
+# Sinhala
+# Slovak
+# Slovenian
+# Somali
+# Sundanese
+# Swahili
+# Swedish
+# Tagalog
+# Tajik
+# Tamil
+# Tatar
+# Telugu
+# Thai
+# Tibetan
+# Turkish
+# Turkmen
+# Ukrainian
+# Urdu
+# Uzbek
+# Vietnamese
+# Welsh
+# Yiddish
+# Yoruba

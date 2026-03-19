@@ -1,0 +1,16 @@
+TaskName   : Silence detection and voice activity gating
+-------------------------------------------------------------------------
+Last Update: 2026-03-19 19:30:00
+-------------------------------------------------------------------------
+Description: Fixed recorder to wait for speech before recording (VAD gating). Previously the loop started
+  recording immediately on launch, capturing silence and triggering Whisper hallucinations ("Thank you").
+  Added MIN_SPEECH_SEC guard to discard clips with insufficient speech.
+-------------------------------------------------------------------------
+Plan:
+  [X] Refactor wait_for_speech_then_record() into two-phase state machine: LISTENING then RECORDING
+  [X] Phase 1: stream audio but discard all chunks until RMS >= SILENCE_THRESHOLD
+  [X] Phase 2: buffer chunks and count silent_chunks; stop when silent_chunks >= chunks_for_silence
+  [X] Track speech_chunks to measure actual speech duration in the segment
+  [X] Return (audio, speech_sec) tuple so caller can filter short clips
+  [X] Add MIN_SPEECH_SEC = 0.4 constant; skip transcription if speech_sec < MIN_SPEECH_SEC
+  [X] Update print messages: "Listening..." for phase 1, "Recording... Xs" live counter for phase 2

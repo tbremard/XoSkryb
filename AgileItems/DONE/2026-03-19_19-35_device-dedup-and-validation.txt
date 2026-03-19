@@ -1,0 +1,15 @@
+TaskName   : Microphone deduplication and device validation
+-------------------------------------------------------------------------
+Last Update: 2026-03-19 19:35:00
+-------------------------------------------------------------------------
+Description: Windows PortAudio exposes the same physical microphone through multiple host APIs (MME,
+  DirectSound, WASAPI), producing duplicate entries with different indices. Higher-index duplicates
+  (e.g. index 26 for Samsung Q9U) crash on open. Fixed by deduplicating by name and validating each
+  device by actually opening a test stream before accepting the selection.
+-------------------------------------------------------------------------
+Plan:
+  [X] Add _get_input_devices(): iterate sd.query_devices(), group by name, keep lowest index only
+  [X] Add _validate_device(index): open a short InputStream as a probe; return True/False
+  [X] Update select_device() to show deduplicated list and call _validate_device before accepting
+  [X] Update load_settings() to re-validate saved device index on each startup
+  [X] Print "Validating device N... OK/FAILED" feedback during selection

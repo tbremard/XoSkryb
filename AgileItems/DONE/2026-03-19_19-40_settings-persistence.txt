@@ -1,0 +1,16 @@
+TaskName   : Settings persistence for device and language
+-------------------------------------------------------------------------
+Last Update: 2026-03-19 19:40:00
+-------------------------------------------------------------------------
+Description: Save microphone device index and selected language to recorder_config.json after first
+  setup so the user is not re-prompted on every run. Added language selection from whisper_languages.conf
+  at first launch. User can delete recorder_config.json to reconfigure.
+-------------------------------------------------------------------------
+Plan:
+  [X] Replace save_device() with save_settings(index, language) writing JSON with both fields
+  [X] Replace load_device() with load_settings() returning (device_index, language) tuple
+  [X] Create whisper_languages.conf listing all ~95 Whisper languages; top 5 uncommented by default
+  [X] Add load_enabled_languages(): parse conf file, return non-commented lines in file order
+  [X] Add select_language(): display numbered list of enabled languages, return user choice
+  [X] Update main() to call select_language() on first run and persist result
+  [X] Print saved settings summary on subsequent runs with hint to delete config file

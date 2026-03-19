@@ -1,0 +1,13 @@
+TaskName   : Rename to XoSkryb and add ASCII banner
+-------------------------------------------------------------------------
+Last Update: 2026-03-19 20:00:00
+-------------------------------------------------------------------------
+Description: Renamed recorder.py to XoSkryb.py. Added a box-drawing ASCII banner displayed both as a
+  file header comment and printed to the terminal at startup. Banner includes program name, author
+  Thierry Brémard, tagline, and Egyptian scribe inspiration reference.
+-------------------------------------------------------------------------
+Plan:
+  [X] Rename recorder.py to XoSkryb.py
+  [X] Add banner as comment block at top of file using box-drawing characters
+  [X] Add print() of same banner at start of main() so it shows on every run
+  [X] Update README.md usage section to reference XoSkryb.py instead of recorder.py

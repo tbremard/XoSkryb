@@ -1,0 +1,15 @@
+TaskName   : Quit with X key during listening phase
+-------------------------------------------------------------------------
+Last Update: 2026-03-19 19:55:00
+-------------------------------------------------------------------------
+Description: Allow the user to exit the program cleanly by pressing X while the program is in the
+  LISTENING phase (waiting for speech). Uses msvcrt.kbhit() for non-blocking console key polling.
+  Does not interfere with the RECORDING phase.
+-------------------------------------------------------------------------
+Plan:
+  [X] Add stop_event = threading.Event() in main() shared across loop iterations
+  [X] Add msvcrt.kbhit() + msvcrt.getwch() check inside LISTENING phase of the recording loop
+  [X] Set stop_event on X/x keypress and break out of the InputStream loop
+  [X] Change main while condition to while not stop_event.is_set()
+  [X] Check stop_event.is_set() after wait_for_speech_then_record() returns and break if set
+  [X] Unify Ctrl+C and X exit paths: both drain the transcription queue before exiting

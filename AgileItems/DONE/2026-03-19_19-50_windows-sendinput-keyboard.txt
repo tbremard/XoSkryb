@@ -1,0 +1,16 @@
+TaskName   : Windows SendInput keyboard injection
+-------------------------------------------------------------------------
+Last Update: 2026-03-19 19:50:00
+-------------------------------------------------------------------------
+Description: Replace clipboard paste (pyautogui + pyperclip) with native Windows SendInput API via ctypes.
+  Initial implementation had wrong INPUT struct size (union missing MOUSEINPUT and HARDWAREINPUT members),
+  causing SendInput to silently drop all keystrokes. Fixed by including all three union members.
+-------------------------------------------------------------------------
+Plan:
+  [X] Define _MOUSEINPUT, _KEYBDINPUT, _HARDWAREINPUT ctypes Structure classes
+  [X] Define _INPUT_UNION with all three members so ctypes computes correct size (MOUSEINPUT is largest)
+  [X] Define _INPUT Structure with anonymous union field
+  [X] Implement type_into_active_window(): batch all key-down/key-up events into single SendInput call
+  [X] Use KEYEVENTF_UNICODE flag so characters are delivered by Unicode value, not virtual key code
+  [X] Add SendInput return value check with WinError logging on mismatch
+  [X] Remove pyautogui and pyperclip dependencies entirely

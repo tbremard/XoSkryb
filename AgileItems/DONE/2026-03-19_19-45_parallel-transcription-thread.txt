@@ -1,0 +1,16 @@
+TaskName   : Parallel transcription with background worker thread
+-------------------------------------------------------------------------
+Last Update: 2026-03-19 19:45:00
+-------------------------------------------------------------------------
+Description: Recording was blocked while Whisper transcribed, losing speech spoken during transcription.
+  Redesigned as a dual-thread pipeline: main thread records continuously and pushes WAV paths to a queue;
+  background daemon thread pulls from the queue and runs Whisper independently.
+-------------------------------------------------------------------------
+Plan:
+  [X] Add seg_queue = queue.Queue() shared between main thread and worker
+  [X] Add _transcription_worker(seg_queue, language) daemon thread function
+  [X] Worker: pull WAV path, run whisper subprocess, read txt, type result, delete temp files
+  [X] Main loop: save each segment to tempfile.mkstemp() unique WAV, put path on queue, immediately resume
+  [X] Fix shutdown: move seg_queue.task_done() into finally block so None sentinel also calls it
+  [X] Graceful exit: put None sentinel, call seg_queue.join() to drain all pending transcriptions
+  [X] Print segment queued confirmation with speech duration and queue depth

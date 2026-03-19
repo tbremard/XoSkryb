@@ -1,0 +1,17 @@
+TaskName   : Platform abstraction for keyboard injection and quit key
+-------------------------------------------------------------------------
+Last Update: 2026-03-19 20:05:00
+-------------------------------------------------------------------------
+Description: Introduced sys.platform detection to isolate Windows-specific code (SendInput, msvcrt)
+  behind a platform switch. Added stub implementations for macOS and Linux with detailed comments
+  explaining which APIs to use for each platform. All platform code is in one place at the top of
+  the file. The program still runs correctly on Windows unchanged.
+-------------------------------------------------------------------------
+Plan:
+  [X] Add import sys and _PLATFORM = sys.platform constant
+  [X] Wrap Windows ctypes/msvcrt imports inside if _PLATFORM == "win32" block
+  [X] Add _quit_key_pressed() Windows implementation using msvcrt.kbhit() / msvcrt.getwch()
+  [X] Add macOS elif block with Quartz/CoreGraphics guidance comment and NotImplementedError stubs
+  [X] Add Linux else block with python-xlib / evdev guidance comment and NotImplementedError stubs
+  [X] Add _quit_key_pressed() stubs returning False for macOS and Linux
+  [X] Replace inline msvcrt calls in recording loop with _quit_key_pressed()
