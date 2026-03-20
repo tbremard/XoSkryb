@@ -32,11 +32,13 @@ class RecordingPhase(Enum):
     DONE       = auto()
 
 
-SILENCE_THRESHOLD  = 0.02    # RMS below this = silence (raise if keyboard noise triggers recording)
+RMS_THRESHOLD      = 0.02    # Single RMS gate: onset detection + post-recording energy check.
+                             # Loaded from config; adjustable at runtime with + / - keys.
+RMS_THRESHOLD_STEP = 0.001               # Increment/decrement applied by + / - keys.
+_RMS_STEP_DECIMALS = len(f"{RMS_THRESHOLD_STEP:.10f}".rstrip("0").split(".")[1])
 SILENCE_DURATION   = 1.0     # Seconds of continuous silence to stop recording
 MIN_SPEECH_SEC     = 0.4     # Minimum speech required before queuing for transcription
 ONSET_CONFIRM_CHUNKS = 3     # Consecutive loud chunks needed to confirm speech onset
-POST_RMS_THRESHOLD = 0.05    # Median chunk RMS below this = noise-only, skip transcription
 POST_RMS_WINDOW    = 0.1     # Window size in seconds for chunked RMS (100 ms)
 POST_RMS_PERCENTILE = 50     # Percentile of chunk RMS values to compare against threshold (50 = median)
 TROUBLESHOOT       = False   # Keep WAV files and print detailed energy analysis
@@ -146,10 +148,17 @@ def select_language() -> str:
 # Recording  (main thread)
 # ---------------------------------------------------------------------------
 
-def wait_for_speech_then_record(device_index: int, stop_event: threading.Event, pause_event: threading.Event) -> tuple[np.ndarray, float]:
+def wait_for_speech_then_record(
+    device_index: int,
+    stop_event: threading.Event,
+    pause_event: threading.Event,
+    threshold: list[float],
+    settings: "Settings",
+) -> tuple[np.ndarray, float]:
     """
-    Phase 1 – wait silently until speech is detected (RMS >= SILENCE_THRESHOLD).
+    Phase 1 – wait silently until speech is detected (RMS >= threshold[0]).
               Pressing X during this phase sets stop_event and returns immediately.
+              Pressing +/- adjusts threshold[0] by RMS_THRESHOLD_STEP and saves to config.
     Phase 2 – record until SILENCE_DURATION seconds of continuous silence.
     Returns (audio_array, speech_seconds).
     """
@@ -165,7 +174,7 @@ def wait_for_speech_then_record(device_index: int, stop_event: threading.Event, 
         nonlocal phase, silent_chunks, speech_chunks, confirm_count
         chunk = indata.copy()
         rms   = float(np.sqrt(np.mean(chunk ** 2)))
-        loud  = rms >= SILENCE_THRESHOLD
+        loud  = rms >= threshold[0]
 
         if phase == RecordingPhase.WAITING:
             if loud:
@@ -228,6 +237,16 @@ def wait_for_speech_then_record(device_index: int, stop_event: threading.Event, 
                 if cmd == Command.PAUSE:
                     pause_event.set()
                     break
+                if cmd == Command.RAISE_THRESHOLD:
+                    threshold[0] = round(threshold[0] + RMS_THRESHOLD_STEP, _RMS_STEP_DECIMALS)
+                    settings.rms_threshold = threshold[0]
+                    settings.save()
+                    print(f"\r[RMS threshold → {threshold[0]:.{_RMS_STEP_DECIMALS}f}]  {listening_msg}")
+                if cmd == Command.LOWER_THRESHOLD:
+                    threshold[0] = max(0.0, round(threshold[0] - RMS_THRESHOLD_STEP, _RMS_STEP_DECIMALS))
+                    settings.rms_threshold = threshold[0]
+                    settings.save()
+                    print(f"\r[RMS threshold → {threshold[0]:.{_RMS_STEP_DECIMALS}f}]  {listening_msg}")
             if phase in (RecordingPhase.CONFIRMING, RecordingPhase.RECORDING):
                 was_recording = True
                 elapsed = len(buffer) * CHUNK_SEC
@@ -306,9 +325,12 @@ def main():
         dev_name = sd.query_devices(_settings.device_index)["name"]
         print(f"Using saved device   : [{_settings.device_index}] {dev_name}")
         print(f"Using saved language : {_settings.language}")
+        print(f"RMS threshold        : {_settings.rms_threshold:.{_RMS_STEP_DECIMALS}f}  (+ / - to adjust by {RMS_THRESHOLD_STEP})")
         print(f"(Delete {CONFIG_FILE} to change these settings.)")
     else:
-        _settings.save(select_device(), select_language())
+        _settings.device_index = select_device()
+        _settings.language     = select_language()
+        _settings.save()
         print(f"\nSettings saved to {CONFIG_FILE}.")
     device_index = _settings.device_index
     language     = _settings.language
@@ -334,16 +356,19 @@ def main():
     worker.start()
     print("\nRecording is active. Focus the window you want text typed into.")
     print("Press Space to pause/resume, X to quit, Ctrl+C to force quit.\n")
+    threshold   = [_settings.rms_threshold]   # mutable so callback + main loop share one value
     stop_event  = threading.Event()
     pause_event = threading.Event()
     try:
         while not stop_event.is_set():
-            audio, speech_sec = wait_for_speech_then_record(device_index, stop_event, pause_event)
+            audio, speech_sec = wait_for_speech_then_record(
+                device_index, stop_event, pause_event, threshold, _settings
+            )
             if stop_event.is_set():
                 break
             if pause_event.is_set():
                 pause_event.clear()
-                print("\n*** PAUSED — press Space to resume, X to quit ***")
+                print("\n*** PAUSED — press Space to resume, X to quit, +/- to adjust threshold ***")
                 while True:
                     cmd = keyboard.poll_command()
                     if cmd == Command.PAUSE:
@@ -352,10 +377,20 @@ def main():
                     if cmd == Command.EXIT:
                         stop_event.set()
                         break
+                    if cmd == Command.RAISE_THRESHOLD:
+                        threshold[0] = round(threshold[0] + RMS_THRESHOLD_STEP, _RMS_STEP_DECIMALS)
+                        _settings.rms_threshold = threshold[0]
+                        _settings.save()
+                        print(f"[RMS threshold → {threshold[0]:.{_RMS_STEP_DECIMALS}f}]")
+                    if cmd == Command.LOWER_THRESHOLD:
+                        threshold[0] = max(0.0, round(threshold[0] - RMS_THRESHOLD_STEP, _RMS_STEP_DECIMALS))
+                        _settings.rms_threshold = threshold[0]
+                        _settings.save()
+                        print(f"[RMS threshold → {threshold[0]:.{_RMS_STEP_DECIMALS}f}]")
                     time.sleep(0.05)
                 continue
             if audio.shape[0] == 0 or speech_sec < MIN_SPEECH_SEC:
-                print(f"(too short: {speech_sec:.2f}s — skipping)\n")
+                print(f"(too short: {speech_sec:.{_RMS_STEP_DECIMALS}f}s — skipping)\n")
                 continue
             # Post-recording energy check — rejects noise-only segments before Whisper.
             # Uses 90th-percentile of chunked RMS so that speech peaks stand out
@@ -389,12 +424,12 @@ def main():
                 p75       = float(np.percentile(chunk_rms, 75))
                 p90       = float(np.percentile(chunk_rms, 90))
                 print(f"  [DIAG] saved: {diag_path}")
-                print(f"  [DIAG] total={total_dur:.2f}s  analysed={len(mono)/SAMPLERATE:.2f}s  chunks={n_full}")
+                print(f"  [DIAG] total={total_dur:.{_RMS_STEP_DECIMALS}f}s  analysed={len(mono)/SAMPLERATE:.{_RMS_STEP_DECIMALS}f}s  chunks={n_full}")
                 print(f"  [DIAG] RMS  min={min_rms:.4f}  mean={mean_rms:.4f}  std={std_rms:.4f}  max={max_rms:.4f}")
                 print(f"  [DIAG] RMS  p50={p50:.4f}  p75={p75:.4f}  p90={p90:.4f}")
             print(f"(post-RMS p{POST_RMS_PERCENTILE}: {post_rms:.4f})")
-            if post_rms < POST_RMS_THRESHOLD:
-                print(f"(noise only: RMS p{POST_RMS_PERCENTILE} {post_rms:.4f} < {POST_RMS_THRESHOLD} — skipping)\n")
+            if post_rms < threshold[0]:
+                print(f"(noise only: RMS p{POST_RMS_PERCENTILE} {post_rms:.4f} < {threshold[0]:.{_RMS_STEP_DECIMALS}f} — skipping)\n")
                 continue
             # Save segment to a unique temp file so the worker and the
             # recording loop never touch the same file simultaneously.

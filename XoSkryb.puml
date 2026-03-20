@@ -1,0 +1,107 @@
+@startuml XoSkryb Architecture
+title XoSkryb — Real-Time Speech-to-Text Scribe
+
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+skinparam defaultFontName Segoe UI
+skinparam ArrowColor #444444
+skinparam NoteBackgroundColor #FFFDE7
+skinparam NoteBorderColor #AAAAAA
+
+' ─────────────────────────────────────────
+' External actors
+' ─────────────────────────────────────────
+actor "Microphone"     as MIC
+actor "Focused Window" as WIN
+actor "User (keyboard)" as USER
+
+' ─────────────────────────────────────────
+' Persistence
+' ─────────────────────────────────────────
+database "XoSkryb.config\n(device_index, language,\nrms_threshold)" as CFG
+file     "XoSkryb.languages" as LANG
+
+' ─────────────────────────────────────────
+' settings.py
+' ─────────────────────────────────────────
+package "settings.py" {
+    component "Settings\n(load / save)" as SETTINGS
+}
+
+' ─────────────────────────────────────────
+' keyboard_controller.py
+' ─────────────────────────────────────────
+package "keyboard_controller.py" {
+    component "KeyboardController\n(poll_command / type_text)" as KB
+}
+note right of KB
+    Commands polled in WAITING and PAUSED:
+    Space → PAUSE / RESUME
+    X     → EXIT
+    +     → RAISE_THRESHOLD (+0.001)
+    -     → LOWER_THRESHOLD (-0.001)
+end note
+
+' ─────────────────────────────────────────
+' External libraries
+' ─────────────────────────────────────────
+component "OpenAI Whisper\n(CUDA / CPU)" as WLIB
+component "Windows SendInput\n(KEYEVENTF_UNICODE)" as SENDINPUT
+
+' ─────────────────────────────────────────
+' XoSkryb.py
+' ─────────────────────────────────────────
+package "XoSkryb.py" {
+
+    component "main()" as MAIN
+    component "Whisper model\n(loaded once at startup)" as WHISPER
+
+    package "Main Thread — audio capture loop" {
+        component "sounddevice.InputStream\n(16 kHz, 100 ms chunks)" as STREAM
+        component "Recording FSM\nWAITING → CONFIRMING → RECORDING → DONE\n(RMS gating, onset confirmation, silence timeout)" as FSM
+        component "Post-recording energy check\n(p50 chunk RMS vs rms_threshold)\nskip if noise-only" as POST
+        component "recordings/\n(temp WAV files)" as WAV
+    }
+
+    package "Worker Thread — TranscriptionWorker (daemon)" {
+        queue "seg_queue\n(unbounded Queue)" as Q
+        component "model.transcribe(wav_path)\n→ transcript.strip()" as TRANSCRIBE
+    }
+}
+
+' ─────────────────────────────────────────
+' Relationships
+' ─────────────────────────────────────────
+MIC      --> STREAM   : raw PCM audio
+
+SETTINGS --> CFG      : save
+CFG      --> SETTINGS : load
+LANG     --> MAIN     : enabled languages
+
+MAIN     --> SETTINGS : read device_index,\nlanguage, rms_threshold
+MAIN     --> WHISPER  : whisper.load_model("small")
+
+STREAM   --> FSM      : 100 ms float32 chunks + per-chunk RMS
+
+USER     --> KB       : keypress
+KB       --> FSM      : command (polled in WAITING)
+KB       --> MAIN     : command (polled while PAUSED)
+MAIN     --> SETTINGS : rms_threshold update + save\n(on + / - press)
+FSM      --> SETTINGS : rms_threshold update + save\n(on + / - press)
+
+FSM      --> POST     : completed audio array
+
+POST     --> WAV      : save_wav() if RMS >= rms_threshold
+POST     --> Q        : put(wav_path)
+
+Q        --> TRANSCRIBE : wav_path (blocking get)
+TRANSCRIBE --> WLIB   : model.transcribe(wav_path)
+WLIB     --> TRANSCRIBE : {"text": "..."}
+TRANSCRIBE --> KB     : type_text(transcript)
+KB       --> SENDINPUT : SendInput per character\n(1 ms delay)
+SENDINPUT --> WIN     : Unicode keystrokes
+TRANSCRIBE --> WAV    : os.remove(wav_path)\n(unless TROUBLESHOOT)
+
+WHISPER ..> TRANSCRIBE : shared model instance
+
+@enduml

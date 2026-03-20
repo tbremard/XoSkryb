@@ -5,12 +5,16 @@ import os
 CONFIG_FILE = "XoSkryb.config"
 
 
+DEFAULT_RMS_THRESHOLD = 0.02
+
+
 class Settings:
-    """Persists and restores device index and language to XoSkryb.config."""
+    """Persists and restores device index, language, and rms_threshold to XoSkryb.config."""
 
     def __init__(self):
-        self.device_index: int | None = None
-        self.language:     str | None = None
+        self.device_index:  int | None   = None
+        self.language:      str | None   = None
+        self.rms_threshold: float        = DEFAULT_RMS_THRESHOLD
 
     def load(self, get_input_devices, validate_device) -> bool:
         """
@@ -31,15 +35,22 @@ class Settings:
             if not validate_device(idx):
                 print(f"Saved device index {idx} failed validation.")
                 return False
-            self.device_index = idx
-            self.language     = language
+            self.device_index  = idx
+            self.language      = language
+            self.rms_threshold = float(cfg.get("rms_threshold", DEFAULT_RMS_THRESHOLD))
             return True
         except Exception:
             return False
 
-    def save(self, device_index: int, language: str):
-        """Persist device index and language to disk."""
-        self.device_index = device_index
-        self.language     = language
+    def save(self):
+        """Persist current settings to disk."""
         with open(CONFIG_FILE, "w") as f:
-            json.dump({"device_index": device_index, "language": language}, f, indent=2)
+            json.dump(
+                {
+                    "device_index":  self.device_index,
+                    "language":      self.language,
+                    "rms_threshold": self.rms_threshold,
+                },
+                f,
+                indent=2,
+            )

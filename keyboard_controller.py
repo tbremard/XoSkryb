@@ -4,8 +4,10 @@ from enum import Enum, auto
 
 
 class Command(Enum):
-    PAUSE = auto()   # Space bar
-    EXIT  = auto()   # X key
+    PAUSE           = auto()   # Space bar
+    EXIT            = auto()   # X key
+    RAISE_THRESHOLD = auto()   # + key — increase RMS threshold by 0.01
+    LOWER_THRESHOLD = auto()   # - key — decrease RMS threshold by 0.01
 
 
 class KeyboardController:
@@ -94,6 +96,8 @@ class KeyboardController:
     _KEY_MAP = {
         " ": Command.PAUSE,
         "x": Command.EXIT,
+        "+": Command.RAISE_THRESHOLD,
+        "-": Command.LOWER_THRESHOLD,
     }
 
     def poll_command(self) -> Command | None:

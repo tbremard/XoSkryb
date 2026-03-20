@@ -49,6 +49,8 @@ appropriate platform blocks in `keyboard_controller.py` and open a pull request.
 
 ## How It Works — Technical Architecture
 
+![XoSkryb Architecture](diagrams/XoSkryb%20Architecture.png)
+
 XoSkryb is built around a **dual-thread pipeline** that keeps the microphone permanently active and never blocks speech capture while transcription is running.
 
 ### Thread 1 — Audio Capture (Main Thread)
@@ -249,7 +251,7 @@ If this prints `False`, PyTorch cannot see your GPU. Do not proceed until this i
 
 The screenshot below confirms that XoSkryb is actively using the CUDA GPU during transcription — this is why installing the CUDA-enabled build of PyTorch **before** Whisper is critical:
 
-![CUDA GPU in use during transcription](cuda-used.jpg)
+![CUDA GPU in use during transcription](diagrams/cuda-used.jpg)
 
 #### Step 4 — Install Whisper
 
@@ -318,7 +320,7 @@ Selections are saved to `XoSkryb.config` and reused on every subsequent run.
 | Press **X** | Graceful shutdown — finishes all pending transcriptions before exiting |
 | Press **Ctrl+C** | Immediate shutdown signal — pending transcriptions are still flushed |
 
-![XoSkryb typing inside Claude Code](demo.jpg)
+![XoSkryb typing inside Claude Code](diagrams/demo.jpg)
 
 ### One-Shot File Transcription
 
@@ -345,6 +347,8 @@ French           ← enabled
 ---
 
 ## Post-Recording Energy Filter
+
+![Recording Activity Diagram](diagrams/Recording%20Activity%20Diagram.png)
 
 After each recording segment is captured and before it is sent to Whisper, XoSkryb runs a **post-recording energy check** to reject noise-only segments. This avoids wasting GPU time on keyboard clicks, mouse taps, or other non-speech sounds.
 
