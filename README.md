@@ -1,3 +1,14 @@
+<div align="center">
+
+# [![TIRITIX](https://tiritix.com)](https://tiritix.com)
+
+### **[tiritix.com](https://tiritix.com)**
+#### Multinational · Cutting-Edge Software · Built for Expert Engineers
+
+---
+
+</div>
+
 # XoSkryb
 
 > *"The scribe who was silent became the scribe who was heard."*
