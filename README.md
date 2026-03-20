@@ -42,8 +42,8 @@ The comments in the stubs describe the recommended APIs for each platform:
 | Linux (X11) | `xtest_fake_input` with `XStringToKeysym` | `python-xlib` |
 | Linux (Wayland) | `UInput` with `EV_KEY` events | `python-evdev` |
 
-To contribute, implement `type_into_active_window(text)` and `_quit_key_pressed()` inside the
-appropriate `elif` / `else` block in `XoSkryb.py` and open a pull request.
+To contribute, implement `type_text(text)` and `poll_command()` inside the
+appropriate platform blocks in `keyboard_controller.py` and open a pull request.
 
 ---
 
@@ -114,6 +114,8 @@ This is by design. Speaking in natural sentence-length bursts with brief pauses 
 
 Once launched, XoSkryb **runs continuously and indefinitely**. There is no record button, no push-to-talk, no mode to activate. The program simply waits, always listening, always ready. It has no opinion about whether you should speak or not — that decision belongs entirely to you.
 
+You can **pause** listening at any time by pressing **Space** in the console. While paused, the microphone is closed and no audio is captured. Press **Space** again to resume. This is useful when you need to have a conversation without XoSkryb transcribing it, or when you want to temporarily silence the tool without quitting.
+
 > **If you do not speak, XoSkryb does nothing.**
 > If you speak, your words are transcribed and typed.
 > The initiative is always yours.
@@ -140,7 +142,7 @@ A typical real-world session looks like this:
 5. Speak naturally — your words are typed directly into that field, as if by an invisible hand
 
 The Python console remains in the background the entire time. You never need to interact with it
-again until you want to quit (press **X** in the console, or **Ctrl+C**).
+again until you want to pause (**Space**) or quit (**X** or **Ctrl+C**).
 
 ## User Responsibility — Window Focus
 
@@ -153,6 +155,28 @@ If the focus shifts to another window between speaking and transcription complet
 be typed into that other window instead. This is intentional — it gives you full, transparent
 control over where the output lands. XoSkryb types where you tell it to by virtue of where you
 click.
+
+### The Scribe and the Pharaoh — a matter of privilege
+
+In ancient Egypt, a scribe served the court — but even the most talented scribe could not simply
+walk into the Pharaoh's throne room and start writing on the royal scrolls. To write in the
+Pharaoh's chambers, the scribe had to be **granted the same rank**.
+
+Windows works the same way. When an application runs as **Administrator** (the Pharaoh), it sits
+in an elevated throne room protected by **UIPI** (User Interface Privilege Isolation). A humble
+scribe running at normal privilege is not allowed to send keystrokes into the Pharaoh's window —
+Windows silently discards them. No error, no warning. The scribe writes, but the ink never reaches
+the papyrus.
+
+The solution is as old as the pyramids: **elevate the scribe to the rank of the Pharaoh**.
+
+```
+# Right-click your terminal → "Run as administrator", then:
+python XoSkryb.py
+```
+
+> **Rule of thumb:** if XoSkryb's words do not appear, the Pharaoh is running as Administrator.
+> Promote the scribe to Administrator as well, and order shall be restored.
 
 ---
 
@@ -278,6 +302,8 @@ Selections are saved to `XoSkryb.config` and reused on every subsequent run.
 | Pause ≥ 2 seconds | Segment is closed, queued for transcription, listening resumes |
 | Transcription complete | Text is typed into the focused window character by character |
 | New speech during transcription | Captured normally — nothing is missed |
+| Press **Space** | Pause listening — microphone is closed, no audio captured |
+| Press **Space** (while paused) | Resume listening |
 | Press **X** | Graceful shutdown — finishes all pending transcriptions before exiting |
 | Press **Ctrl+C** | Immediate shutdown signal — pending transcriptions are still flushed |
 
@@ -312,6 +338,8 @@ French           ← enabled
 ```
 XoScriber/
 ├── XoSkryb.py              # Main application — live dictation engine
+├── keyboard_controller.py  # Keyboard injection + command polling (Command enum)
+├── settings.py             # Settings persistence (device index, language)
 ├── transcribe.py           # Standalone file transcription utility
 ├── XoSkryb.languages       # Language menu configuration
 ├── XoSkryb.config          # Saved device and language settings (auto-generated)

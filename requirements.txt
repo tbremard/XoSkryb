@@ -1,0 +1,9 @@
+numpy>=2.0
+sounddevice>=0.5
+soundfile>=0.13
+openai-whisper>=20250625
+
+# PyTorch with CUDA must be installed separately before the other packages:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# Then install the rest:
+#   pip install -r requirements.txt

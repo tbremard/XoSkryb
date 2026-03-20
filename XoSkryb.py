@@ -20,7 +20,7 @@ import sounddevice as sd
 import soundfile as sf
 import torch
 import whisper
-from keyboard_controller import KeyboardController
+from keyboard_controller import KeyboardController, Command
 from settings import Settings, CONFIG_FILE
 
 keyboard = KeyboardController()
@@ -35,6 +35,8 @@ SILENCE_THRESHOLD  = 0.02    # RMS below this = silence (raise if keyboard noise
 SILENCE_DURATION   = 1.0     # Seconds of continuous silence to stop recording
 MIN_SPEECH_SEC     = 0.4     # Minimum speech required before queuing for transcription
 NOISE_CANCEL_CHUNKS = 2      # Consecutive silent chunks right after onset that cancel the recording
+POST_RMS_THRESHOLD = 0.12    # Post-recording RMS below this = noise-only segment, skip transcription
+POST_RMS_STEP      = 10      # Subsample stride for fast post-recording RMS estimate
 SAMPLERATE         = 16000
 CHANNELS           = 1
 CHUNK_SEC          = 0.1     # Duration of each audio chunk (100 ms)
@@ -141,7 +143,7 @@ def select_language() -> str:
 # Recording  (main thread)
 # ---------------------------------------------------------------------------
 
-def wait_for_speech_then_record(device_index: int, stop_event: threading.Event) -> tuple[np.ndarray, float]:
+def wait_for_speech_then_record(device_index: int, stop_event: threading.Event, pause_event: threading.Event) -> tuple[np.ndarray, float]:
     """
     Phase 1 – wait silently until speech is detected (RMS >= SILENCE_THRESHOLD).
               Pressing X during this phase sets stop_event and returns immediately.
@@ -191,7 +193,7 @@ def wait_for_speech_then_record(device_index: int, stop_event: threading.Event) 
                 elif silent_chunks >= chunks_silence:
                     phase = RecordingPhase.DONE
     #-------------------------------
-    print("Listening... (waiting for speech — press X to quit)")
+    print("Listening... (waiting for speech — Space to pause, X to quit)")
     with sd.InputStream(
         device    = device_index,
         samplerate= SAMPLERATE,
@@ -201,16 +203,21 @@ def wait_for_speech_then_record(device_index: int, stop_event: threading.Event) 
         callback  = callback,
     ):
         while phase != RecordingPhase.DONE:
-            if phase == RecordingPhase.WAITING and keyboard.quit_key_pressed():
-                stop_event.set()
-                break
+            if phase == RecordingPhase.WAITING:
+                cmd = keyboard.poll_command()
+                if cmd == Command.EXIT:
+                    stop_event.set()
+                    break
+                if cmd == Command.PAUSE:
+                    pause_event.set()
+                    break
             if phase == RecordingPhase.RECORDING:
                 elapsed = len(buffer) * CHUNK_SEC
                 print(f"\rRecording... {elapsed:.1f}s", end="", flush=True)
             time.sleep(0.05)
 
     #-------------------------------
-    print("\rSilence detected. Stopped.            ")
+    print(f"\rRecording stopped — {len(buffer) * CHUNK_SEC:.1f}s captured.")
     if not buffer:
         return np.zeros((0, CHANNELS), dtype="float32"), 0.0
     audio      = np.concatenate(buffer, axis=0)
@@ -265,7 +272,7 @@ def main():
         "\n"
         "╔══════════════════════════════════════════════════════════════════════════╗\n"
         "║                                                                          ║\n"
-        "║                           X o S k r y b                                 ║\n"
+        "║                           X o S k r y b                                  ║\n"
         "║                                                                          ║\n"
         "║                         by Thierry Brémard                               ║\n"
         "║                                                                          ║\n"
@@ -308,15 +315,37 @@ def main():
     )
     worker.start()
     print("\nRecording is active. Focus the window you want text typed into.")
-    print("Press X (while listening) or Ctrl+C to quit.\n")
-    stop_event = threading.Event()
+    print("Press Space to pause/resume, X to quit, Ctrl+C to force quit.\n")
+    stop_event  = threading.Event()
+    pause_event = threading.Event()
     try:
         while not stop_event.is_set():
-            audio, speech_sec = wait_for_speech_then_record(device_index, stop_event)
+            audio, speech_sec = wait_for_speech_then_record(device_index, stop_event, pause_event)
             if stop_event.is_set():
                 break
+            if pause_event.is_set():
+                pause_event.clear()
+                print("\n*** PAUSED — press Space to resume, X to quit ***")
+                while True:
+                    cmd = keyboard.poll_command()
+                    if cmd == Command.PAUSE:
+                        print("*** RESUMED ***\n")
+                        break
+                    if cmd == Command.EXIT:
+                        stop_event.set()
+                        break
+                    time.sleep(0.05)
+                continue
             if audio.shape[0] == 0 or speech_sec < MIN_SPEECH_SEC:
                 print(f"(too short: {speech_sec:.2f}s — skipping)\n")
+                continue
+            # Fast post-recording energy check — subsample to avoid processing
+            # the full array.  Rejects noise-only segments before Whisper.
+            subsampled = audio[::POST_RMS_STEP, 0] if audio.ndim > 1 else audio[::POST_RMS_STEP]
+            post_rms = float(np.sqrt(np.mean(subsampled ** 2)))
+            print(f"(post-RMS: {post_rms:.4f})")
+            if post_rms < POST_RMS_THRESHOLD:
+                print(f"(noise only: RMS {post_rms:.4f} < {POST_RMS_THRESHOLD} — skipping)\n")
                 continue
             # Save segment to a unique temp file so the worker and the
             # recording loop never touch the same file simultaneously.

@@ -12,12 +12,14 @@ Designed and architected by **Thierry Brémard**.
 
 ```
 XoScriber/
-├── XoSkryb.py          # Main application — live dictation engine
-├── transcribe.py       # Standalone one-shot file transcription utility (uses subprocess/CLI)
-├── XoSkryb.languages   # Language menu config — uncomment to enable a language
-├── XoSkryb.config      # Auto-generated: saved device index + language (JSON)
-├── recordings/         # Temporary WAV segments (auto-deleted after transcription)
-└── Transcripts/        # Whisper CLI output dir (used by transcribe.py)
+├── XoSkryb.py              # Main application — live dictation engine
+├── keyboard_controller.py  # Keyboard injection + command polling (Command enum, platform abstraction)
+├── settings.py             # Settings persistence (device index, language)
+├── transcribe.py           # Standalone one-shot file transcription utility (uses subprocess/CLI)
+├── XoSkryb.languages       # Language menu config — uncomment to enable a language
+├── XoSkryb.config          # Auto-generated: saved device index + language (JSON)
+├── recordings/             # Temporary WAV segments (auto-deleted after transcription)
+└── Transcripts/            # Whisper CLI output dir (used by transcribe.py)
 ```
 
 ---
@@ -47,11 +49,25 @@ transcript = result["text"].strip()
 
 No subprocess is spawned per segment. `transcribe.py` is a separate standalone utility that still uses the Whisper CLI subprocess — this is intentional (different use case).
 
-### Keyboard injection (Windows only)
+### Keyboard controller (`keyboard_controller.py`)
 
-Uses `ctypes` + `user32.SendInput` with `KEYEVENTF_UNICODE` events. One key-down + key-up per character, 1 ms sleep between characters. The `_INPUT` struct includes all three union members (`MOUSEINPUT`, `KEYBDINPUT`, `HARDWAREINPUT`) to ensure correct struct sizing on 64-bit Windows.
+The `KeyboardController` class handles both text injection and command polling, abstracted behind a platform switch.
 
-Stubs for macOS and Linux are present in the platform switch block at the top of `XoSkryb.py`.
+- **Text injection** (Windows): `ctypes` + `user32.SendInput` with `KEYEVENTF_UNICODE` events. One key-down + key-up per character, 1 ms sleep between characters. The `_INPUT` struct includes all three union members (`MOUSEINPUT`, `KEYBDINPUT`, `HARDWAREINPUT`) to ensure correct struct sizing on 64-bit Windows.
+- **Command polling**: `poll_command()` reads a keypress (non-blocking) and maps it to a `Command` enum value via `_KEY_MAP`. Returns `None` for unmapped keys.
+
+The `Command` enum defines all keyboard commands:
+
+| Command | Key | Action |
+|---|---|---|
+| `Command.PAUSE` | Space | Pause/resume listening |
+| `Command.EXIT` | X | Graceful shutdown |
+
+Stubs for macOS and Linux are present in the platform switch blocks.
+
+### UIPI constraint (Windows)
+
+Windows UIPI (User Interface Privilege Isolation) silently drops `SendInput` keystrokes sent from a normal-privilege process to an elevated (Administrator) window. If the target application runs as Administrator, XoSkryb must also run as Administrator to type into it.
 
 ---
 
@@ -94,4 +110,10 @@ python XoSkryb.py          # live dictation
 python transcribe.py <file> # one-shot file transcription
 ```
 
-Press **X** (while in the listening phase) or **Ctrl+C** to quit gracefully. Pending transcriptions are flushed before exit.
+| Key | Action |
+|---|---|
+| **Space** | Pause/resume listening |
+| **X** | Graceful shutdown — pending transcriptions are flushed before exit |
+| **Ctrl+C** | Force quit — pending transcriptions are still flushed |
+
+Keys are only detected during the WAITING phase (not while recording).

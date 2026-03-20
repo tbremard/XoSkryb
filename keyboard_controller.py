@@ -1,5 +1,11 @@
 import sys
 import time
+from enum import Enum, auto
+
+
+class Command(Enum):
+    PAUSE = auto()   # Space bar
+    EXIT  = auto()   # X key
 
 
 class KeyboardController:
@@ -85,22 +91,27 @@ class KeyboardController:
     # Public — quit-key detection
     # ------------------------------------------------------------------
 
-    def quit_key_pressed(self) -> bool:
-        """Return True if the user pressed X/x to request a graceful shutdown."""
+    _KEY_MAP = {
+        " ": Command.PAUSE,
+        "x": Command.EXIT,
+    }
+
+    def poll_command(self) -> Command | None:
+        """Return a Command if a mapped key was pressed, None otherwise."""
         if self._platform == "win32":
             import msvcrt
             if msvcrt.kbhit():
-                return msvcrt.getwch().lower() == "x"
-            return False
+                return self._KEY_MAP.get(msvcrt.getwch().lower())
+            return None
 
         # TO BE DONE — macOS
         # Use select.select([sys.stdin], [], [], 0) combined with tty/termios
-        # to poll for a keypress without blocking, then check for 'x'.
+        # to poll for a keypress without blocking.
 
         # TO BE DONE — Linux
         # Same approach: select + tty/termios raw mode.
 
-        return False
+        return None
 
     # ------------------------------------------------------------------
     # Public — text injection

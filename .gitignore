@@ -1,2 +1,4 @@
 /log*
 /recordings/
+/__pycache__/keyboard_controller.cpython-310.pyc
+/__pycache__/

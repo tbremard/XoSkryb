@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python XoSkryb.py)",
+      "Bash(grep -rhE \"^import |^from \" *.py)",
+      "Bash(pip:*)",
+      "Bash(python:*)"
+    ]
+  }
+}
