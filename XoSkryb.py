@@ -26,17 +26,20 @@ from settings import Settings, CONFIG_FILE
 keyboard = KeyboardController()
 
 class RecordingPhase(Enum):
-    WAITING   = auto()
-    RECORDING = auto()
-    DONE      = auto()
+    WAITING    = auto()
+    CONFIRMING = auto()   # Got first loud chunk, need ONSET_CONFIRM_CHUNKS consecutive loud chunks
+    RECORDING  = auto()
+    DONE       = auto()
 
 
 SILENCE_THRESHOLD  = 0.02    # RMS below this = silence (raise if keyboard noise triggers recording)
 SILENCE_DURATION   = 1.0     # Seconds of continuous silence to stop recording
 MIN_SPEECH_SEC     = 0.4     # Minimum speech required before queuing for transcription
-NOISE_CANCEL_CHUNKS = 2      # Consecutive silent chunks right after onset that cancel the recording
-POST_RMS_THRESHOLD = 0.12    # Post-recording RMS below this = noise-only segment, skip transcription
-POST_RMS_STEP      = 10      # Subsample stride for fast post-recording RMS estimate
+ONSET_CONFIRM_CHUNKS = 3     # Consecutive loud chunks needed to confirm speech onset
+POST_RMS_THRESHOLD = 0.05    # Median chunk RMS below this = noise-only, skip transcription
+POST_RMS_WINDOW    = 0.1     # Window size in seconds for chunked RMS (100 ms)
+POST_RMS_PERCENTILE = 50     # Percentile of chunk RMS values to compare against threshold (50 = median)
+TROUBLESHOOT       = False   # Keep WAV files and print detailed energy analysis
 SAMPLERATE         = 16000
 CHANNELS           = 1
 CHUNK_SEC          = 0.1     # Duration of each audio chunk (100 ms)
@@ -156,44 +159,53 @@ def wait_for_speech_then_record(device_index: int, stop_event: threading.Event, 
     buffer        = []
     silent_chunks = 0
     speech_chunks = 0
-    onset_silent  = 0   # consecutive silent chunks seen right after the trigger chunk
+    confirm_count = 0   # consecutive loud chunks during CONFIRMING phase
     #-------------------------------
     def callback(indata, frames, time_info, status):
-        nonlocal phase, silent_chunks, speech_chunks, onset_silent
+        nonlocal phase, silent_chunks, speech_chunks, confirm_count
         chunk = indata.copy()
         rms   = float(np.sqrt(np.mean(chunk ** 2)))
         loud  = rms >= SILENCE_THRESHOLD
 
         if phase == RecordingPhase.WAITING:
             if loud:
-                phase          = RecordingPhase.RECORDING
-                silent_chunks  = 0
-                onset_silent   = 0
+                # First loud chunk — enter confirmation phase.
+                phase         = RecordingPhase.CONFIRMING
+                confirm_count = 1
+                buffer.clear()
                 buffer.append(chunk)
-                speech_chunks  = 1
+                speech_chunks = 1
+
+        elif phase == RecordingPhase.CONFIRMING:
+            buffer.append(chunk)
+            if loud:
+                confirm_count += 1
+                speech_chunks += 1
+                if confirm_count >= ONSET_CONFIRM_CHUNKS:
+                    # Enough consecutive loud chunks — confirmed as speech.
+                    phase         = RecordingPhase.RECORDING
+                    silent_chunks = 0
+            else:
+                # Silence during confirmation — noise spike, reset.
+                phase         = RecordingPhase.WAITING
+                buffer.clear()
+                silent_chunks = 0
+                speech_chunks = 0
+                confirm_count = 0
 
         elif phase == RecordingPhase.RECORDING:
             buffer.append(chunk)
             if loud:
                 silent_chunks = 0
-                onset_silent  = 0
                 speech_chunks += 1
             else:
                 silent_chunks += 1
-                if speech_chunks == 1:
-                    # Confirmation window: still only the trigger chunk — check for noise spike.
-                    onset_silent += 1
-                    if onset_silent >= NOISE_CANCEL_CHUNKS:
-                        # Silence immediately after trigger → noise spike, ignore it.
-                        phase         = RecordingPhase.WAITING
-                        buffer.clear()
-                        silent_chunks = 0
-                        speech_chunks = 0
-                        onset_silent  = 0
-                elif silent_chunks >= chunks_silence:
+                if silent_chunks >= chunks_silence:
                     phase = RecordingPhase.DONE
     #-------------------------------
-    print("Listening... (waiting for speech — Space to pause, X to quit)")
+    listening_msg = "Listening... (waiting for speech — Space to pause, X to quit)"
+    print(listening_msg)
+    was_recording = False
     with sd.InputStream(
         device    = device_index,
         samplerate= SAMPLERATE,
@@ -204,6 +216,11 @@ def wait_for_speech_then_record(device_index: int, stop_event: threading.Event, 
     ):
         while phase != RecordingPhase.DONE:
             if phase == RecordingPhase.WAITING:
+                if was_recording:
+                    # Noise-cancel reset: clear the "Recording..." line and
+                    # show that we are back to listening.
+                    print(f"\r{listening_msg}")
+                    was_recording = False
                 cmd = keyboard.poll_command()
                 if cmd == Command.EXIT:
                     stop_event.set()
@@ -211,7 +228,8 @@ def wait_for_speech_then_record(device_index: int, stop_event: threading.Event, 
                 if cmd == Command.PAUSE:
                     pause_event.set()
                     break
-            if phase == RecordingPhase.RECORDING:
+            if phase in (RecordingPhase.CONFIRMING, RecordingPhase.RECORDING):
+                was_recording = True
                 elapsed = len(buffer) * CHUNK_SEC
                 print(f"\rRecording... {elapsed:.1f}s", end="", flush=True)
             time.sleep(0.05)
@@ -254,8 +272,8 @@ def _transcription_worker(seg_queue: queue.Queue, language: str, model):
         except Exception as e:
             print(f"\n[transcription error] {e}")
         finally:
-            # Always clean up the temporary WAV and mark item done.
-            if wav_path is not None:
+            # Clean up the temporary WAV (skipped in troubleshoot mode).
+            if wav_path is not None and not TROUBLESHOOT:
                 try:
                     os.remove(wav_path)
                 except OSError:
@@ -339,13 +357,44 @@ def main():
             if audio.shape[0] == 0 or speech_sec < MIN_SPEECH_SEC:
                 print(f"(too short: {speech_sec:.2f}s — skipping)\n")
                 continue
-            # Fast post-recording energy check — subsample to avoid processing
-            # the full array.  Rejects noise-only segments before Whisper.
-            subsampled = audio[::POST_RMS_STEP, 0] if audio.ndim > 1 else audio[::POST_RMS_STEP]
-            post_rms = float(np.sqrt(np.mean(subsampled ** 2)))
-            print(f"(post-RMS: {post_rms:.4f})")
+            # Post-recording energy check — rejects noise-only segments before Whisper.
+            # Uses 90th-percentile of chunked RMS so that speech peaks stand out
+            # even when the recording contains silence or pauses.
+            mono = audio[:, 0] if audio.ndim > 1 else audio
+            total_dur = len(mono) / SAMPLERATE
+            # Strip trailing silence (recording always ends with ~SILENCE_DURATION of quiet).
+            trim_samples = int(SILENCE_DURATION * SAMPLERATE)
+            if len(mono) > trim_samples:
+                mono = mono[: len(mono) - trim_samples]
+            # Compute RMS per small window, then take a high percentile.
+            win = int(POST_RMS_WINDOW * SAMPLERATE)
+            n_full = len(mono) // win
+            if n_full > 0:
+                chunks = mono[: n_full * win].reshape(n_full, win)
+                chunk_rms = np.sqrt(np.mean(chunks ** 2, axis=1))
+                post_rms = float(np.percentile(chunk_rms, POST_RMS_PERCENTILE))
+            else:
+                chunk_rms = np.array([float(np.sqrt(np.mean(mono ** 2)))])
+                post_rms = float(chunk_rms[0])
+            # --- Troubleshoot: save WAV and print detailed analysis ---
+            if TROUBLESHOOT:
+                ts = time.strftime("%H%M%S")
+                diag_path = os.path.join(RECORDINGS_DIR, f"diag_{ts}_{speech_sec:.1f}s.wav")
+                save_wav(audio, diag_path)
+                mean_rms  = float(np.mean(chunk_rms))
+                std_rms   = float(np.std(chunk_rms))
+                min_rms   = float(np.min(chunk_rms))
+                max_rms   = float(np.max(chunk_rms))
+                p50       = float(np.percentile(chunk_rms, 50))
+                p75       = float(np.percentile(chunk_rms, 75))
+                p90       = float(np.percentile(chunk_rms, 90))
+                print(f"  [DIAG] saved: {diag_path}")
+                print(f"  [DIAG] total={total_dur:.2f}s  analysed={len(mono)/SAMPLERATE:.2f}s  chunks={n_full}")
+                print(f"  [DIAG] RMS  min={min_rms:.4f}  mean={mean_rms:.4f}  std={std_rms:.4f}  max={max_rms:.4f}")
+                print(f"  [DIAG] RMS  p50={p50:.4f}  p75={p75:.4f}  p90={p90:.4f}")
+            print(f"(post-RMS p{POST_RMS_PERCENTILE}: {post_rms:.4f})")
             if post_rms < POST_RMS_THRESHOLD:
-                print(f"(noise only: RMS {post_rms:.4f} < {POST_RMS_THRESHOLD} — skipping)\n")
+                print(f"(noise only: RMS p{POST_RMS_PERCENTILE} {post_rms:.4f} < {POST_RMS_THRESHOLD} — skipping)\n")
                 continue
             # Save segment to a unique temp file so the worker and the
             # recording loop never touch the same file simultaneously.

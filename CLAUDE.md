@@ -16,6 +16,7 @@ XoScriber/
 ├── keyboard_controller.py  # Keyboard injection + command polling (Command enum, platform abstraction)
 ├── settings.py             # Settings persistence (device index, language)
 ├── transcribe.py           # Standalone one-shot file transcription utility (uses subprocess/CLI)
+├── audio_stat.py           # WAV energy diagnostic tool (speech vs noise analysis)
 ├── XoSkryb.languages       # Language menu config — uncomment to enable a language
 ├── XoSkryb.config          # Auto-generated: saved device index + language (JSON)
 ├── recordings/             # Temporary WAV segments (auto-deleted after transcription)
@@ -28,7 +29,7 @@ XoScriber/
 
 ### Dual-thread pipeline
 
-- **Main thread** — audio capture loop (`sounddevice.InputStream`, 100 ms chunks, RMS gating). Two phases: WAITING → RECORDING → back to WAITING. Never blocks on transcription.
+- **Main thread** — audio capture loop (`sounddevice.InputStream`, 100 ms chunks, RMS gating). Three phases: WAITING → CONFIRMING (3 consecutive loud chunks required) → RECORDING → back to WAITING. Never blocks on transcription.
 - **Worker thread** (`TranscriptionWorker`) — daemon thread pulling WAV paths from an unbounded `queue.Queue`. Transcribes with the pre-loaded Whisper model, types result via `SendInput`, deletes the WAV.
 
 ### Whisper integration
@@ -76,8 +77,12 @@ Windows UIPI (User Interface Privilege Isolation) silently drops `SendInput` key
 | Constant | Default | Purpose |
 |---|---|---|
 | `SILENCE_THRESHOLD` | `0.02` | RMS below this = silence. Raise if keyboard noise triggers recording. |
-| `SILENCE_DURATION` | `2.0` s | Continuous silence needed to close a recording segment. |
+| `SILENCE_DURATION` | `1.0` s | Continuous silence needed to close a recording segment. |
 | `MIN_SPEECH_SEC` | `0.4` s | Minimum speech duration to queue for transcription. |
+| `ONSET_CONFIRM_CHUNKS` | `3` | Consecutive loud chunks needed to confirm speech onset (prevents noise spikes). |
+| `POST_RMS_THRESHOLD` | `0.05` | Median chunk RMS below this = noise-only segment, skip transcription. |
+| `POST_RMS_PERCENTILE` | `50` | Percentile (median) of chunk RMS used for post-recording energy check. |
+| `TROUBLESHOOT` | `False` | When True, keeps WAV files and prints detailed energy diagnostics. |
 | `SAMPLERATE` | `16000` Hz | Audio sample rate (Whisper native rate). |
 | `CHUNK_SEC` | `0.1` s | Audio callback chunk size. |
 

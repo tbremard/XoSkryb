@@ -1,0 +1,118 @@
+@startuml Recording Activity Diagram
+title XoSkryb — Recording State Machine & Processing Pipeline
+skinparam ActivityBackgroundColor #F9F9F9
+skinparam ActivityBorderColor #333333
+
+|Main Thread|
+start
+:Open microphone\n(sounddevice.InputStream, 100 ms chunks);
+
+partition "Audio Callback (per chunk)" {
+
+  :Read audio chunk;
+  :Compute RMS = sqrt(mean(chunk**2));
+
+  if (phase?) then
+    if (WAITING) then
+
+      if (RMS >= SILENCE_THRESHOLD?) then (yes: loud)
+        :phase = **CONFIRMING**;
+        :confirm_count = 1;
+        :Append chunk to buffer;
+      else (no: silent)
+        :Discard chunk;
+      endif
+
+    elseif (CONFIRMING) then
+
+      :Append chunk to buffer;
+      if (RMS >= SILENCE_THRESHOLD?) then (yes: loud)
+        :confirm_count++;
+        if (confirm_count >= ONSET_CONFIRM_CHUNKS (3)?) then (yes)
+          #PaleGreen:phase = **RECORDING**\n(speech confirmed);
+        else (no)
+          :Stay in CONFIRMING;
+        endif
+      else (no: silent = noise spike)
+        #LightCoral:phase = **WAITING**\n(reset: clear buffer);
+        :Print "Listening...";
+      endif
+
+    elseif (RECORDING) then
+
+      :Append chunk to buffer;
+      if (RMS >= SILENCE_THRESHOLD?) then (yes: loud)
+        :silent_chunks = 0;
+        :speech_chunks++;
+      else (no: silent)
+        :silent_chunks++;
+        if (silent_chunks >= SILENCE_DURATION / CHUNK_SEC?) then (yes)
+          #SteelBlue:phase = **DONE**;
+        else (no)
+          :Continue recording;
+        endif
+      endif
+
+    endif
+  endif
+}
+
+:Print "Recording stopped";
+
+partition "Post-recording Checks" {
+
+  if (speech_sec < MIN_SPEECH_SEC?) then (yes)
+    #LightCoral:Skip\n(too short);
+    detach
+  endif
+
+  :Extract mono signal;
+  :Trim trailing silence\n(SILENCE_DURATION);
+
+  :Split into 100 ms windows;
+  :Compute RMS per window;
+  :post_rms = **median** (p50)\nof chunk RMS values;
+
+  if (TROUBLESHOOT?) then (yes)
+    :Save diag WAV;
+    :Print detailed stats\n(min, mean, std, max, p50, p75, p90);
+  endif
+
+  if (post_rms < POST_RMS_THRESHOLD?) then (yes)
+    #LightCoral:Skip\n(noise only: low median energy);
+    detach
+  endif
+
+  #PaleGreen:Save WAV to temp file;
+  :Push WAV path to **seg_queue**;
+}
+
+:Return to Listening;
+detach
+
+|Worker Thread|
+
+:Wait on seg_queue;
+:Pull WAV path;
+
+if (sentinel None?) then (yes)
+  stop
+endif
+
+:Whisper transcribe\n(GPU / CUDA);
+:transcript = result["text"];
+
+if (transcript not empty?) then (yes)
+  :Type text via **SendInput**\n(KEYEVENTF_UNICODE);
+endif
+
+if (TROUBLESHOOT?) then (no)
+  :Delete temp WAV;
+else (yes)
+  :Keep WAV for analysis;
+endif
+
+:Loop back to queue;
+detach
+
+@enduml

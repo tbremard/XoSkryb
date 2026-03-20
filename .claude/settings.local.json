@@ -4,7 +4,14 @@
       "Bash(python XoSkryb.py)",
       "Bash(grep -rhE \"^import |^from \" *.py)",
       "Bash(pip:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(curl:*)",
+      "Bash(java:*)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Program Files/Microsoft/**)",
+      "Bash(where.exe java:*)",
+      "Bash(cmd.exe /c 'where java')",
+      "WebFetch(domain:pypi.org)"
     ]
   }
 }

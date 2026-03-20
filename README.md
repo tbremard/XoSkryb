@@ -55,24 +55,35 @@ XoSkryb is built around a **dual-thread pipeline** that keeps the microphone per
 
 The main thread runs an infinite listening loop powered by `sounddevice.InputStream`, streaming raw audio from the microphone in 100 ms chunks. Each chunk is analyzed in real time using **RMS amplitude** (Root Mean Square), a measure of the energy level of the audio signal.
 
-The capture follows a strict two-phase state machine:
+The capture follows a strict state machine with **speech onset confirmation**:
 
 ```
-Phase 1 ── LISTENING
+Phase 1 ── WAITING
   │   Microphone is open. Audio is streamed but discarded.
   │   RMS is measured on every chunk.
-  │   As long as RMS < SILENCE_THRESHOLD → stay in LISTENING.
-  │   As soon as RMS ≥ SILENCE_THRESHOLD → speech detected.
+  │   As long as RMS < SILENCE_THRESHOLD → stay in WAITING.
+  │   As soon as RMS ≥ SILENCE_THRESHOLD → enter confirmation.
   │
-  └──► Phase 2 ── RECORDING
+  └──► Phase 2 ── CONFIRMING
+  │      Consecutive loud chunks are counted.
+  │      If ONSET_CONFIRM_CHUNKS (3) consecutive loud chunks are seen
+  │      → speech confirmed → transition to RECORDING.
+  │      If any chunk is silent during confirmation
+  │      → noise spike → reset to WAITING (buffer cleared).
+  │
+  └──► Phase 3 ── RECORDING
          Audio chunks are accumulated into a memory buffer.
          RMS is still measured on every chunk.
-         When RMS < SILENCE_THRESHOLD for ≥ 2 consecutive seconds
+         When RMS < SILENCE_THRESHOLD for ≥ SILENCE_DURATION (1 s)
          → silence detected → recording stops.
          The buffer is saved as a temporary WAV file.
          The WAV path is pushed onto the transcription queue.
          Immediately return to Phase 1.
 ```
+
+The confirmation phase prevents isolated noise spikes (keyboard clicks, mouse taps) from
+triggering a recording. Only sustained sound that lasts at least 3 consecutive chunks (300 ms)
+is accepted as speech onset.
 
 The main thread **never waits for transcription** — it returns to listening the instant a segment is
 queued. This means you can start speaking a new sentence while the previous one is still being
@@ -101,7 +112,7 @@ The queue between the two threads is unbounded. If you speak faster than Whisper
 
 ### Why Pause Between Sentences?
 
-Whisper is a **segment-based** transcription model. It transcribes a fixed audio clip from start to finish — it does not stream word by word. XoSkryb uses natural pauses in your speech as the trigger to close a recording segment and send it for transcription. **A pause of approximately 2 seconds** signals the end of a sentence and flushes it to the transcription queue.
+Whisper is a **segment-based** transcription model. It transcribes a fixed audio clip from start to finish — it does not stream word by word. XoSkryb uses natural pauses in your speech as the trigger to close a recording segment and send it for transcription. **A pause of approximately 1 second** (configurable via `SILENCE_DURATION`) signals the end of a sentence and flushes it to the transcription queue.
 
 - A short pause → sentence is flushed → Whisper transcribes → text is typed
 - No pause → recording continues accumulating → nothing is typed yet
@@ -299,7 +310,7 @@ Selections are saved to `XoSkryb.config` and reused on every subsequent run.
 |---|---|
 | Silence | Microphone is open and listening — no audio is captured or stored |
 | Speech detected | Recording begins immediately, RMS-gated |
-| Pause ≥ 2 seconds | Segment is closed, queued for transcription, listening resumes |
+| Pause ≥ 1 second | Segment is closed, queued for transcription, listening resumes |
 | Transcription complete | Text is typed into the focused window character by character |
 | New speech during transcription | Captured normally — nothing is missed |
 | Press **Space** | Pause listening — microphone is closed, no audio captured |
@@ -333,6 +344,56 @@ French           ← enabled
 
 ---
 
+## Post-Recording Energy Filter
+
+After each recording segment is captured and before it is sent to Whisper, XoSkryb runs a **post-recording energy check** to reject noise-only segments. This avoids wasting GPU time on keyboard clicks, mouse taps, or other non-speech sounds.
+
+### How it works
+
+The recorded audio is split into 100 ms chunks and the RMS (Root Mean Square) energy of each chunk is computed. The **median (p50)** of these chunk RMS values is compared against a threshold.
+
+| Constant | Default | Purpose |
+|---|---|---|
+| `POST_RMS_THRESHOLD` | `0.05` | Median chunk RMS below this = noise, skip transcription |
+| `POST_RMS_WINDOW` | `0.1` s | Chunk size for per-window RMS calculation (100 ms) |
+| `POST_RMS_PERCENTILE` | `50` | Percentile used (50 = median) |
+
+### Why median, not mean or p90?
+
+Spiky noise (keyboard typing, clicks) produces short loud bursts separated by silence. The **mean** RMS gets diluted by silence, making noise and speech hard to distinguish. The **p90** catches the spikes, so noise can actually score *higher* than speech. The **median** measures *sustained* energy — speech fills most chunks with energy (high median), while spiky noise has mostly quiet chunks between bursts (low median).
+
+Typical values observed during testing:
+
+| Metric | Speech | Noise |
+|---|---|---|
+| p50 (median) | 0.07–0.08 | 0.02–0.03 |
+| chunks >= 0.05 | ~70 % | ~30 % |
+| chunks >= 0.03 | ~80 % | ~45 % |
+
+The trailing silence at the end of each recording (caused by `SILENCE_DURATION`) is trimmed before the energy check so it does not dilute the measurement.
+
+### Troubleshooting mode
+
+Set `TROUBLESHOOT = True` in `XoSkryb.py` to enable diagnostic output. In this mode:
+
+- Every recorded segment is saved as `recordings/diag_HHMMSS_X.Xs.wav` (not deleted)
+- Detailed per-segment energy stats are printed: min, mean, std, max, p50, p75, p90
+- Transcribed WAV files are also kept for inspection
+
+Set back to `False` for normal use.
+
+### Audio diagnostic tool
+
+A standalone script `audio_stat.py` is provided to analyse saved WAV files:
+
+```
+python audio_stat.py <path_to_wav_file>
+```
+
+It prints the full RMS timeline, percentiles, stats, and a speech-vs-noise verdict based on the key differentiators. Useful for tuning the energy thresholds for your specific microphone and environment.
+
+---
+
 ## Project Structure
 
 ```
@@ -341,6 +402,7 @@ XoScriber/
 ├── keyboard_controller.py  # Keyboard injection + command polling (Command enum)
 ├── settings.py             # Settings persistence (device index, language)
 ├── transcribe.py           # Standalone file transcription utility
+├── audio_stat.py           # WAV energy diagnostic tool (speech vs noise analysis)
 ├── XoSkryb.languages       # Language menu configuration
 ├── XoSkryb.config          # Saved device and language settings (auto-generated)
 ├── recordings/             # Temporary WAV segments (auto-deleted after transcription)
@@ -351,7 +413,8 @@ XoScriber/
 
 ## Tips for Best Results
 
-- **Speak in complete sentences** and pause naturally at the end. A 2-second pause triggers transcription.
+- **Speak in complete sentences** and pause naturally at the end. A 1-second pause triggers transcription.
+- **Speak fluently and avoid long pauses** within a sentence — long mid-sentence silences can cause premature segment cuts or lower the energy metrics that distinguish speech from noise.
 - **Keep sentences reasonably short** — shorter segments transcribe faster, reducing queue buildup.
 - **Use a directional microphone** or headset to minimise ambient noise and keyboard sound pickup.
 - **Set window focus before speaking** — click your target text field first.
